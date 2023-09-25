@@ -1,0 +1,198 @@
+---
+title: "Low power statistical tests playground"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    mathjax: null
+    theme: 
+      version: 4
+      bootswatch: flatly
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, error = FALSE)
+```
+
+```{r, echo = FALSE}
+suppressMessages({
+  library(ggplot2)
+  library(flexdashboard)
+  library(shiny)
+  library(ggdark)
+})
+
+```
+
+
+Inputs {.sidebar data-width=300}
+-----------------------------------------------------------------------
+
+```{r}
+sliderInput("effect_size", "Effect size", 0.1, 5, value = 1, step = 0.1)
+sliderInput("data_sd", "Standard deviation", 0, 5, value = 3, step = 0.1)
+sliderInput("alpha", "Alpha / confidence level", 0.01, 0.1, value = 0.05, step = 0.01)
+numericInput("n_test", "Number of subjects", value = 10, max = 1000)
+sliderInput("n_iter", "Number of iterations (10^k)", 2, 5, value = 4, step = 0.5)
+```
+
+#### Note
+
+This _playground_ illustrates the distribution of the outputs of a sample of statistical tests. It is intended to explore the artifacts that may arise when statistical power is low.
+
+
+```{r}
+calculate <- reactive({
+  
+  effect_size <- input$effect_size
+  data_sd     <- input$data_sd
+  alpha       <- input$alpha
+  n_test      <- input$n_test
+  n_iter      <- 10^input$n_iter
+  
+  muestra <- rnorm(n_test, effect_size, data_sd)
+  
+  do_one_test <- function(x) {
+    out <- t.test(x, conf.level = 1 - alpha)
+    c(
+      out$p.value,
+      out$conf.int[1],
+      out$conf.int[2],
+      out$estimate
+    )
+  }
+  
+  muestra <- rnorm(n_test, effect_size, data_sd)
+  out <- replicate(n_iter, do_one_test(muestra))
+  out <- data.frame(t(out))
+  colnames(out) <- c("p_value", "ci_lower", "ci_upper", "estimated")
+  
+  do_tests <- function() {
+    #muestra <- rnorm(n_test, effect_size, data_sd)
+    out <- replicate(n_iter, do_one_test(rnorm(n_test, effect_size, data_sd)))
+    out <- data.frame(t(out))
+    colnames(out) <- c("p_value", "ci_lower", "ci_upper", "estimate")
+    out$significant <- out$p_value < alpha
+    out <- out[order(out$estimate),]
+    out
+  }
+  
+  res <- do_tests()
+
+})
+```
+
+
+Row
+-----------------------------------------------------------------------
+
+### Proportion of significant tests (aka, power) {.value-box}
+
+```{r}
+renderValueBox({
+  x <- calculate()
+  total <- 100 * sum(x$significant) / nrow(x)
+  total <- round(total, digits = 2)
+  valueBox(
+    value = paste0(total, " %")
+  )
+})
+```
+
+### Proportion of significant tests with a negative estimate (wrong sign!)  {.value-box}
+
+```{r}
+renderValueBox({
+  x <- calculate()  
+  x <- x[x$significant,]
+  x <- mean(x$estimate < 0)
+  total <- round(100 * x, digits = 2)
+  valueBox(
+    value = paste0(total, " %")
+  )
+})
+```
+
+### Average significant effect (positive estimates only) {.value-box}
+
+```{r}
+renderValueBox({
+  x <- calculate()  
+  x <- x[x$significant,]
+  x <- x[x$estimate > 0,]
+  total <- round(mean(x$estimate), digits = 2)
+  valueBox(
+    value = paste0(total)
+  )
+})
+```
+
+
+### Efect overestimation (for positive effects only) {.value-box}
+
+```{r}
+renderValueBox({
+  x <- calculate()  
+  x <- x[x$significant,]
+  x <- x[x$estimate > 0,]
+  total <- 100 * (mean(x$estimate) - input$effect_size) / input$effect_size
+  pct <- round(total, digits = 1)
+  valueBox(
+    value = paste0(pct, " %")
+  )
+})
+```
+
+
+Row
+-------------------------------------
+
+### Distribution of estimated effects for the _significant tests_: comparing significant vs all tests
+
+
+```{r}
+renderPlot({
+
+  res <- calculate()
+  
+  tmp <- res[res$significant,]
+  tmp$significant <- "significant"
+  res$significant <- "all"
+  
+  tmp <- rbind(tmp, res)
+  
+  ggplot(tmp, aes(x = estimate, group = significant)) + 
+    geom_density(aes(fill = significant), alpha = 0.4) +
+    xlab("test estimate") +
+    ylab("") +
+    geom_vline(xintercept = input$effect_size, color = "black", alpha = 0.4) +
+    theme_bw()
+    
+})
+```
+
+
+Row
+-------------------------------------
+
+### Distribution of estimated effects for the _significant tests_ only
+
+
+```{r}
+renderPlot({
+
+  res <- calculate()
+  
+  tmp <- res[res$significant,]
+
+  ggplot(tmp, aes(x = estimate)) + 
+    geom_density(fill = "#00BFC4", alpha = 0.4) +
+    xlab("test estimate") +
+    ylab("") +
+    geom_vline(xintercept = input$effect_size, color = "black", alpha = 0.4) +
+    theme_bw()
+    
+})
+```
+

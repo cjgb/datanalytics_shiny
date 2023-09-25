@@ -1,0 +1,199 @@
+---
+title: "Levelized cost of energy analysis"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    mathjax: null
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+#knitr::opts_knit$set(root.dir = "..")
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, error = FALSE)
+```
+
+```{r, echo = FALSE}
+suppressMessages({
+  #library(flexdashboard)
+  library(plotly)
+  library(ggplot2)   # remove?
+  library(DT)
+  # library(data.table)
+  # library(reshape2)
+  library(FinancialMath)
+})
+
+downloadButtonRmd <- function (outputId, label = "Download", class = NULL, ...)  {
+     tags$a(id = outputId, class = paste("btn btn-default shiny-download-link", 
+        class), href = "", target = "_blank", download = NA, 
+        icon("download"), label, ...)
+ }
+```
+
+    
+Inputs {.sidebar data-width=300}
+-----------------------------------------------------------------------
+
+```{r}
+#actionButton("calculate", "Calculate")
+
+numericInput("capacity_mwh", "Capacity (MW)", 175)
+sliderInput("capacity_pct", "Capacity factor (%)", 0, 100, value = 38)
+numericInput("fixed_om", "Fixed O&M ($/kW-year)", 36)
+numericInput("variable_om", "Variable O&M ($/MWh)", 0)
+
+## Capital structure
+sliderInput("debt", "Debt (as % of investment)", 0, 100, value = 60)
+numericInput("cost_debt", "Cost of debt (%)", 8)
+numericInput("cost_equity", "Cost of equity (%)", 12)
+
+# Taxes and depreciations
+sliderInput("tax_rate", "Tax Rate (%)", 0, 100, value = 40)
+numericInput("economic_life", "Economic Life (years)", 20)
+
+## Capex
+numericInput("capex", "Investment ($/kW)", 1350)
+
+downloadButtonRmd('report','Download')
+```
+
+```{r}
+#calculate <- eventReactive(input$calculate, {
+calculate <- reactive({
+  year <- 1:round(input$economic_life)
+  generation <- rep(365 * 24 * input$capacity_mwh * input$capacity_pct / 100, length(year))
+  
+  total_om <- generation * input$variable_om + 1000 * input$capacity_mwh * input$fixed_om
+  
+  # debt 
+  total_debt   <- 1000 * input$capex * input$capacity_mwh * input$debt / 100
+  total_equity <- 1000 * input$capex * input$capacity_mwh * (1 - input$debt / 100)
+  tmp <- amort.table(total_debt, n = length(year), pmt = NA, i = input$cost_debt / 100, ic = 1, pf = 1, plot = FALSE)
+  tmp <- data.frame(tmp$Schedule)
+  colnames(tmp) <- c("payment", "interest", "principal", "debt")
+  
+  debt <- tmp$debt
+  interest <- tmp$interest
+  principal <- tmp$principal
+  debt_serviced <- tmp$payment
+  
+  depreciation <- rep(total_debt / max(year), length(year))   # linear!
+  
+  # function to calculate the energy cost
+  
+  npv <- function(price) {
+    revenues <- generation * price
+    ebitda <- revenues - total_om
+    
+    taxable <- ebitda - depreciation - interest
+    tax <- taxable * input$tax_rate / 100
+    
+    net_cash_flow <- ebitda - debt_serviced - tax
+    
+    iir <- sum(net_cash_flow / (1 + input$cost_equity / 100)) - total_equity
+  }
+  
+  my_price <- uniroot(npv, interval = c(0, 10000))$root
+  
+  price <- rep(my_price, length(year))
+  revenues <- generation * my_price
+  ebitda <- revenues - total_om
+  
+  taxable <- ebitda - depreciation - interest
+  tax <- taxable * input$tax_rate / 100
+  
+  net_cash_flow <- ebitda - debt_serviced - tax
+  
+  out <- data.frame(
+    year = year,
+    generation = generation,
+    price = my_price,
+    revenues = revenues,
+    total_om = total_om,
+    ebitda = ebitda,
+    debt = debt,
+    interest = interest,
+    principal = principal,
+    serviced = debt_serviced,
+    depreciation = depreciation,
+    taxable = taxable,
+    tax = tax,
+    net_income = net_cash_flow
+  )
+  
+})
+```
+
+
+Row
+-------------------------------------
+
+### Levelized cost of energy
+
+```{r}
+renderDataTable({
+  
+  out <- calculate()
+  
+  out$generation <- round(out$generation / 1000, digits = 1)
+  out$price      <- round(out$price, digits = 1)
+  out$revenues   <- round(out$revenues / 1e6, digits = 1)
+  out$total_om   <- round(out$total_om / 1e6, digits = 1)
+  out$ebitda     <- round(out$ebitda / 1e6, digits = 1)
+  out$debt       <- round(out$debt / 1e6, digits = 1)
+  out$interest       <- round(out$interest / 1e6, digits = 1)
+  out$principal       <- round(out$principal / 1e6, digits = 1)
+  out$serviced       <- round(out$serviced / 1e6, digits = 1)
+  out$depreciation       <- round(out$depreciation / 1e6, digits = 1)
+  out$taxable       <- round(out$taxable / 1e6, digits = 1)
+  out$tax       <- round(out$tax / 1e6, digits = 1)
+  out$net_income       <- round(out$net_income / 1e6, digits = 1)
+  
+
+  datatable(out,
+        rownames = FALSE,
+        colnames = c("Year", "GWh/year", "$/MWh", "Revenue", "O&M", "EBITDA", "Debt remaining", "Interest Payment", "Principal Payment", 
+                     "Debt Payment", "Depreciation", "Taxable Income", "Tax", "Net Income"),
+        options = list(
+          pageLength = max(out$year),
+          paging = TRUE,
+          searching = TRUE,
+          ordering = FALSE,
+          dom = "t")) #%>% 
+    # formatRound("presupuesto_sin_impuesto", 3) %>% 
+    # formatPercentage("baja_media", 1) %>% 
+    # formatPercentage("baja_temeraria", 1) %>% 
+    # formatRound("presupuesto_sin_impuesto", 2)
+})
+```
+
+**Note:** Unless explictly stated otherwise, amounts are expressed in millions of USD.
+
+```{r}
+output$report <-downloadHandler(
+  filename = function() "levelized_cost_energy.csv",
+  content = function(file) {
+        write.csv(calculate(), file = file, row.names = FALSE)
+      },
+  contentType="text/csv"
+)
+```
+
+
+Row
+-------------------------------------
+
+### Notes
+
+This dashboard is a reverse engineered, dynamic, and slightly simplified version of the spreadsheet embedded in [Lazard's Levelized Cost of Energy Analysis (v. 15.0)](https://www.lazard.com/media/451905/lazards-levelized-cost-of-energy-version-150-vf.pdf).
+
+By default, it shows the analysis for the wind farm shown in page 14 of such document. It is possible to reproduce the levelized costs of energy of the plants/scenarios shown in pages 16-19.
+
+The simplifications in this dashboard (with respect to Lazard's spreadsheet) are:
+
+* O&M costs do not increase overtime.
+* The discounting method used here is simpler (constant discount throughout the plant's life).
+* The cost of fuel, if any, needs to be explicitly calculated and inputed as a variable O&M cost.
+
+
