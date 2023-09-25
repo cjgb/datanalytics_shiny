@@ -20,7 +20,7 @@ suppressMessages({
   library(ggplot2)
   library(flexdashboard)
   library(shiny)
-  library(ggdark)
+  #library(ggdark)
 })
 
 ```
@@ -39,7 +39,9 @@ sliderInput("n_iter", "Number of iterations (10^k)", 2, 5, value = 4, step = 0.5
 
 #### Note
 
-This _playground_ illustrates the distribution of the outputs of a sample of statistical tests. It is intended to explore the artifacts that may arise when statistical power is low.
+This _playground_ illustrates the distribution of the outputs of a sample of statistical tests. It is intended to explore the artifacts that may arise when statistical power is low. See 
+[this](https://datanalytics.com/2023/09/28/potencia-tests-estadisticos/)
+for further details.
 
 
 ```{r}
@@ -87,7 +89,7 @@ calculate <- reactive({
 Row
 -----------------------------------------------------------------------
 
-### Proportion of significant tests (aka, power) {.value-box}
+### Proportion of significant tests (aka, statistical power) {.value-box}
 
 ```{r}
 renderValueBox({
