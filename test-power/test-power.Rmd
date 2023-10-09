@@ -20,7 +20,7 @@ suppressMessages({
   library(ggplot2)
   library(flexdashboard)
   library(shiny)
-  #library(ggdark)
+  library(pwr)
 })
 
 ```
@@ -53,28 +53,27 @@ calculate <- reactive({
   n_test      <- input$n_test
   n_iter      <- 10^input$n_iter
   
-  muestra <- rnorm(n_test, effect_size, data_sd)
-  
   do_one_test <- function(x) {
     out <- t.test(x, conf.level = 1 - alpha)
+    
+    # a posteriory power calculation
+    power <- pwr.t.test(n=length(x), d=mean(x) / sd(x), sig.level=alpha, type="one.sample", alternative="two.sided")
+    
     c(
       out$p.value,
       out$conf.int[1],
       out$conf.int[2],
-      out$estimate
+      out$estimate,
+      sd(x),
+      power$power
     )
   }
-  
-  muestra <- rnorm(n_test, effect_size, data_sd)
-  out <- replicate(n_iter, do_one_test(muestra))
-  out <- data.frame(t(out))
-  colnames(out) <- c("p_value", "ci_lower", "ci_upper", "estimated")
   
   do_tests <- function() {
     #muestra <- rnorm(n_test, effect_size, data_sd)
     out <- replicate(n_iter, do_one_test(rnorm(n_test, effect_size, data_sd)))
     out <- data.frame(t(out))
-    colnames(out) <- c("p_value", "ci_lower", "ci_upper", "estimate")
+    colnames(out) <- c("p_value", "ci_lower", "ci_upper", "estimate", "estimated_sd", "power")
     out$significant <- out$p_value < alpha
     out <- out[order(out$estimate),]
     out
@@ -175,10 +174,11 @@ renderPlot({
 ```
 
 
+
 Row
 -------------------------------------
 
-### Distribution of estimated effects for the _significant tests_ only
+### _A posteriori_ test power, i.e., power calculated retroactively based on observed data mean and standard deviation.
 
 
 ```{r}
@@ -186,13 +186,19 @@ renderPlot({
 
   res <- calculate()
   
+  estimated_power <- 100 * mean(res$significant)
+  
   tmp <- res[res$significant,]
-
-  ggplot(tmp, aes(x = estimate)) + 
-    geom_density(fill = "#00BFC4", alpha = 0.4) +
-    xlab("test estimate") +
+  tmp$significant <- "significant"
+  res$significant <- "all"
+  
+  tmp <- rbind(tmp, res)
+  
+  ggplot(tmp, aes(x = 100 * power, group = significant)) + 
+    geom_density(aes(fill = significant), alpha = 0.4) +
+    xlab("a posteriori test power") +
     ylab("") +
-    geom_vline(xintercept = input$effect_size, color = "black", alpha = 0.4) +
+    geom_vline(xintercept = estimated_power, color = "black", alpha = 0.4) +
     theme_bw()
     
 })
